@@ -36,17 +36,17 @@ python test_fashion.py --ckpt /path/to/checkpoint
 
 ### Learning Rate & Batch Size
 
-![截屏2024-09-11 14.12.16](img/img1.jpg)
+![截屏2024-09-11 14.12.16](img1.jpg)
 
-![截屏2024-09-11 14.13.01](img/img2.jpg)
+![截屏2024-09-11 14.13.01](img2.jpg)
 
 ### Weight Decay
 
-![截屏2024-09-11 14.15.08](img/img3.jpg)
+![截屏2024-09-11 14.15.08](img3.jpg)
 
 ### Dropout
 
-![截屏2024-09-11 14.17.21](img/img4.jpg)
+![截屏2024-09-11 14.17.21](img4.jpg)
 
 ## Result
 
