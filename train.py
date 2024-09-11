@@ -50,6 +50,11 @@ def parse_arg():
     parser.add_argument('--save_dir', type=str, default='./save')
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--weight_decay', type=float, default=0)
+    parser.add_argument('--gpu', type=int, default=0)
+    parser.add_argument('--use_batch_norm', action="store_true")
+    parser.add_argument('--use_drop_out', action="store_true")
+    parser.add_argument('--drop_out_prob', type=float, default=0.5)
+    parser.add_argument('--test_curve', action="store_true")
     args = parser.parse_args()
     return args
 
@@ -64,6 +69,7 @@ def train(model, train_loader, test_loader,
     save_step = train_args['save_steps']
     save_path = train_args['save_path']
     device = train_args['device']
+    test_curve = train_args['test_curve']
 
     writer = SummaryWriter(run_name)
 
@@ -99,14 +105,35 @@ def train(model, train_loader, test_loader,
             global_step += 1
 
             if global_step % test_step == 0:
-                eval(model, test_loader, criterion, writer, device, global_step)
+                eval(model, 
+                     train_loader, 
+                     test_loader, 
+                     criterion, 
+                     writer, 
+                     device, 
+                     global_step, 
+                     test_curve)
 
             if global_step % save_step == 0:
                 torch.save(model, os.path.join(save_path, f'model_{global_step}'))
 
 @torch.no_grad()
-def eval(model, test_loader, criterion, writer, device, global_step):
+def eval(model, train_loader, test_loader, criterion, writer, device, global_step, test_curve):
     model.eval()
+
+    if test_curve:
+        train_acc_total = []
+        for img, label in tqdm(train_loader, desc='eval on train batch'):
+            img = img.to(device)
+            label = label.to(device)
+            logits = model(img)
+
+            label_pred = torch.argmax(logits, -1)
+            acc = torch.sum(label == label_pred).float() / label_pred.shape[0]
+            train_acc_total.append(acc.item())
+        acc = np.mean(np.array(train_acc_total))
+        writer.add_scalar('Metrics/train_accuracy_full', acc, global_step)
+        print('train_accuracy_full:', acc)
 
     val_loss_total = []
     acc_total = []
@@ -124,11 +151,18 @@ def eval(model, test_loader, criterion, writer, device, global_step):
 
     val_loss = np.mean(np.array(val_loss_total))
     acc = np.mean(np.array(acc_total))
-    writer.add_scalar('Loss/val_loss', val_loss, global_step)
-    writer.add_scalar('Metrics/val_accuracy', acc, global_step)
+    if not test_curve:
+        writer.add_scalar('Loss/val_loss', val_loss, global_step)
+        writer.add_scalar('Metrics/val_accuracy', acc, global_step)
+        print('val_loss:', val_loss)
+        print('val_acc:', acc)
+    else:
+        writer.add_scalar('Loss/test_loss', val_loss, global_step)
+        writer.add_scalar('Metrics/test_accuracy', acc, global_step)
+        print('test_loss:', val_loss)
+        print('test_acc:', acc)
 
-    print('val_loss:', val_loss)
-    print('val_acc:', acc)
+    
 
     model.train()
 
@@ -151,34 +185,39 @@ def main():
     # load dataset
     fashion_mnist = datasets.FashionMNIST('./data', download=True, train=True, transform=transform)
 
-    test_ratio = 0.2
-    test_size = int(test_ratio * len(fashion_mnist))
-    train_size = len(fashion_mnist) - test_size
-    train_dataset, test_dataset = random_split(fashion_mnist, [train_size, test_size])
-
     bs = args.batch_size
-    train_loader = DataLoader(train_dataset, batch_size=bs, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=bs, shuffle=False)
+    if not args.test_curve:
+        test_ratio = 0.2
+        test_size = int(test_ratio * len(fashion_mnist))
+        train_size = len(fashion_mnist) - test_size
+        train_dataset, test_dataset = random_split(fashion_mnist, [train_size, test_size])
+
+        train_loader = DataLoader(train_dataset, batch_size=bs, shuffle=True)
+        test_loader = DataLoader(test_dataset, batch_size=bs, shuffle=False)
+    else:
+        train_loader = DataLoader(fashion_mnist, batch_size=bs, shuffle=True)
+        fashion_mnist_test = datasets.FashionMNIST('./data', download=True, train=False, transform=transform)
+        test_loader = DataLoader(fashion_mnist_test, batch_size=bs, shuffle=True)
 
     # set lr
-    model = LeNet5(num_class=10)
+    if args.use_batch_norm:
+        model = LeNet5(num_class=10, use_batch_norm=True)
+    elif args.use_drop_out:
+        model = LeNet5(num_class=10, use_drop_out=True, drop_out_prob=args.drop_out_prob)
+    else:
+        model = LeNet5(num_class=10)
     train_steps = args.train_steps
     warmup_steps = args.warmup_steps
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = LambdaLR(optimizer, lr_lambda=lambda step: lr_cos(step, warmup_steps, train_steps))
     criterion = nn.CrossEntropyLoss()
 
-    # check that MPS is available
-    if not torch.backends.mps.is_available():
-        if not torch.backends.mps.is_built():
-            print("MPS not available because the current PyTorch install was not "
-                "built with MPS enabled.")
-        else:
-            print("MPS not available because the current MacOS version is not 12.3+ "
-                "and/or you do not have an MPS-enabled device on this machine.")
-        device = torch.device("cpu")
+    # check that GPU is available
+    if torch.cuda.is_available():
+        gpu = args.gpu
+        device = torch.device(f"cuda:{gpu}")
     else:
-        device = torch.device("mps")
+        device = torch.device("cpu")
 
     # set training args
     save_dir = args.save_dir
@@ -193,7 +232,8 @@ def main():
         'save_steps': args.save_steps,
         'log_steps': args.log_steps,
         'save_path': save_path,
-        'device': device
+        'device': device,
+        'test_curve': args.test_curve,
     }
 
     # train model
