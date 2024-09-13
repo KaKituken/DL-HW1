@@ -28,8 +28,6 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-set_seed(2019)
-
 def parse_arg():
     parser = argparse.ArgumentParser()
     parser.add_argument('-b', '--batch_size', type=int, default=64)
@@ -51,6 +49,7 @@ def parse_arg():
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--weight_decay', type=float, default=0)
     parser.add_argument('--gpu', type=int, default=0)
+    parser.add_argument('--seed', type=int, default=2019)
     parser.add_argument('--use_batch_norm', action="store_true")
     parser.add_argument('--use_drop_out', action="store_true")
     parser.add_argument('--drop_out_prob', type=float, default=0.5)
@@ -115,7 +114,9 @@ def train(model, train_loader, test_loader,
                      test_curve)
 
             if global_step % save_step == 0:
+                model.eval()
                 torch.save(model, os.path.join(save_path, f'model_{global_step}'))
+                model.train()
 
 @torch.no_grad()
 def eval(model, train_loader, test_loader, criterion, writer, device, global_step, test_curve):
@@ -176,6 +177,8 @@ def lr_cos(current_step: int, num_warmup_steps: int, num_training_steps: int):
 
 def main():
     args = parse_arg()
+    seed = args.seed
+    set_seed(seed)
     transform = transforms.Compose([
         transforms.Resize((32, 32)),
         transforms.ToTensor(),
